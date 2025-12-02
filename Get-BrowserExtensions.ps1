@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Inventaire des extensions de navigateurs (Chrome, Edge, Brave, Firefox, Opera )
+    Inventaire pour le SOC des extensions de navigateurs (Chrome, Edge, Brave, Firefox, Opera )
 .DESCRIPTION
     - Parcourt tous les profils utilisateurs locaux (hors C:\Windows)
     - Détecte les navigateurs installés (profils présents)
@@ -8,6 +8,8 @@
     - Envoie les données soit :
         * sur Azure Log Analytics (par défaut),
         * soit dans un fichier local (JSONL) si -OutputTarget Local specified
+         -v 2 corriger bug export avec loga sur AZ
+
 .PARAMETER OutputTarget
     Local  : écrit dans un fichier local JSONL (un objet JSON par ligne).
     Azure  : envoie vers Log Analytics (HTTP Data Collector API).
@@ -22,35 +24,25 @@
 .PARAMETER Browser
     Permet de filtrer les navigateurs à scanner
 #>
-
 [CmdletBinding()]
 param(
     [Parameter()]
     [ValidateSet('Azure','Local')]
     [string]$OutputTarget = 'Azure',
-
     [Parameter()]
     [string]$OutputPath,
-
     [Parameter()]
     [string]$WorkspaceId = $env:BROWSER_INV_WORKSPACEID,
-
     [Parameter()]
     [string]$SharedKey   = $env:BROWSER_INV_SHAREDKEY,
-
     [Parameter()]
     [string]$LogType = 'BrowserExtensions',
-
     [Parameter()]
     [ValidateSet('Chrome','Edge','Brave','Firefox','Opera','OperaGX')]
     [string[]]$Browser = @('Chrome','Edge','Brave','Firefox','Opera','OperaGX')
 )
 
 begin {
-
-    # ---------------------------------------------------------
-    # Fonctions utilitaires
-    # ---------------------------------------------------------
 
     function Test-IsElevated {
         $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -63,7 +55,6 @@ begin {
         exit 1
     }
 
-    # Récupération des profils utilisateurs Windows (hors C:\Windows)
     function Get-UserProfiles {
         Get-WmiObject Win32_UserProfile |
             Where-Object { $_.LocalPath -and $_.LocalPath -notlike 'C:\Windows*' } |
@@ -71,7 +62,6 @@ begin {
             Select-Object LocalPath, SID
     }
 
-    # Définition des navigateurs supportés (chemins relatifs à partir du profil)
     $Global:BrowserConfig = @{
         'Chrome' = @{
             Engine      = 'Chromium'
@@ -105,7 +95,6 @@ begin {
         }
     }
 
-    # Lecture "safe" JSON
     function Get-JsonSafe {
         param(
             [Parameter(Mandatory=$true)]
@@ -125,7 +114,6 @@ begin {
         return $null
     }
 
-    # Résolution du nom d'extension à partir des locales (__MSG_*)
     function Resolve-ChromiumExtensionNameFromLocales {
         param(
             [Parameter(Mandatory=$true)]
@@ -155,16 +143,14 @@ begin {
                 if ($messages.PSObject.Properties.Name -contains $appId) {
                     $candidates += $messages.$appId.message
                 }
-
                 foreach ($c in $candidates) {
                     if ($c) { return $c }
                 }
             }
         }
-        return $MsgToken   # fallback : on renvoie le token brut
+        return $MsgToken
     }
 
-    # Récupère les profils Chromium à partir d'un User Data
     function Get-ChromiumProfiles {
         param(
             [Parameter(Mandatory=$true)]
@@ -172,7 +158,6 @@ begin {
         )
 
         $profiles = @()
-
         $localStatePath = Join-Path $UserDataPath 'Local State'
         $localState = Get-JsonSafe -Path $localStatePath
 
@@ -185,7 +170,6 @@ begin {
             }
         }
         else {
-            # fallback : tous les dossiers "Default" / "Profile *"
             Get-ChildItem -Path $UserDataPath -Directory -ErrorAction SilentlyContinue |
                 Where-Object { $_.Name -match '^Default$|^Profile \d+$' } |
                 ForEach-Object {
@@ -199,7 +183,6 @@ begin {
         return $profiles
     }
 
-    # Récupère les extensions Chromium pour un profil donné
     function Get-ChromiumExtensionsFromProfile {
         param(
             [Parameter(Mandatory=$true)][string]$BrowserName,
@@ -214,7 +197,6 @@ begin {
         )
 
         $results = New-Object System.Collections.Generic.List[object]
-
         $extensionsRoot = Join-Path $ProfileRoot 'Extensions'
         if (-not (Test-Path $extensionsRoot)) { return $results }
 
@@ -224,7 +206,6 @@ begin {
         foreach ($extDir in $extensionDirs) {
             $versionDirs = Get-ChildItem -Path $extDir.FullName -Directory -ErrorAction SilentlyContinue
             foreach ($v in $versionDirs) {
-
                 $manifestPath = Join-Path $v.FullName 'manifest.json'
                 $manifest = Get-JsonSafe -Path $manifestPath
                 if (-not $manifest) { continue }
@@ -267,7 +248,6 @@ begin {
         return $results
     }
 
-    # Récupère les extensions Firefox pour un profil donné
     function Get-FirefoxExtensionsFromProfile {
         param(
             [Parameter(Mandatory=$true)][string]$BrowserName,
@@ -301,7 +281,7 @@ begin {
                 UserSid        = $UserSid
                 Browser        = $BrowserName
                 BrowserChannel = $BrowserChannel
-                ProfileName    = $ext.defaultLocale.name  # pas idéal mais utile
+                ProfileName    = $ext.defaultLocale.name
                 ProfileDir     = (Split-Path $ProfilePath -Leaf)
                 ProfilePath    = $ProfilePath
                 ExtensionId    = $ext.id
@@ -317,19 +297,15 @@ begin {
         return $results
     }
 
-    # Envoi vers Log Analytics (Data Collector API)
     function Send-LogAnalyticsData {
         [CmdletBinding()]
         param(
             [Parameter(Mandatory = $true)]
             [string]$WorkspaceId,
-
             [Parameter(Mandatory = $true)]
             [string]$SharedKey,
-
             [Parameter(Mandatory = $true)]
             [string]$LogType,
-
             [Parameter(Mandatory = $true)]
             [object]$Data
         )
@@ -350,9 +326,8 @@ begin {
         $hmacSha256.Key     = $decodedKey
         $hash               = $hmacSha256.ComputeHash($bytesToSign)
         $signature          = [Convert]::ToBase64String($hash)
-        $authorization      = "SharedKey $($WorkspaceId):$($signature)"
 
-
+        $authorization = "SharedKey $($WorkspaceId):$($signature)"
         $uri = "https://$WorkspaceId.ods.opinsights.azure.com$resource?api-version=2016-04-01"
 
         $headers = @{
@@ -365,7 +340,6 @@ begin {
         Invoke-RestMethod -Method $method -Uri $uri -Headers $headers -Body $bytes -ErrorAction Stop
     }
 
-    # Ecriture locale JSONL
     function Write-ExtensionsToLocalFile {
         param(
             [Parameter(Mandatory=$true)][string]$Path,
@@ -377,7 +351,6 @@ begin {
             New-Item -Path $dir -ItemType Directory -Force | Out-Null
         }
 
-        # JSON Lines : un objet JSON par ligne
         $Data | ForEach-Object {
             $_ | ConvertTo-Json -Depth 10 -Compress | Out-File -FilePath $Path -Encoding UTF8 -Append
         }
@@ -390,10 +363,6 @@ begin {
 
 process {
 
-    # ---------------------------------------------------------
-    # Collecte principale
-    # ---------------------------------------------------------
-
     $profiles = Get-UserProfiles
     foreach ($p in $profiles) {
         $userPath = $p.LocalPath
@@ -401,37 +370,31 @@ process {
         $userName = Split-Path $userPath -Leaf
 
         foreach ($b in $Browser) {
-
             if (-not $BrowserConfig.ContainsKey($b)) { continue }
             $cfg = $BrowserConfig[$b]
             $basePath = Join-Path $userPath $cfg.BasePathRel
-
             if (-not (Test-Path $basePath)) { continue }
 
             switch ($cfg.Engine) {
                 'Chromium' {
-                    # Cas Opera/OperaGX : le "User Data" est déjà le profil lui-même
                     if ($b -in @('Opera','OperaGX')) {
-                        # Chaque profil = un seul "User Data", on traite comme un profil unique
                         $profileDir  = Split-Path $basePath -Leaf
                         $profileName = $profileDir
-                        $profRoot    = Split-Path $basePath -Parent   
-
                         $extensions = Get-ChromiumExtensionsFromProfile `
-                            -BrowserName    $b `
-                            -BrowserChannel $cfg.Channel `
-                            -UserName       $userName `
-                            -UserSid        $userSid `
+                            -BrowserName      $b `
+                            -BrowserChannel   $cfg.Channel `
+                            -UserName         $userName `
+                            -UserSid          $userSid `
                             -ProfileDirectory $profileDir `
-                            -ProfileName    $profileName `
-                            -ProfileRoot    $basePath `
-                            -ComputerName   $ComputerName `
-                            -RunId          $RunId
-
-                        $AllExtensions.AddRange($extensions)
+                            -ProfileName      $profileName `
+                            -ProfileRoot      $basePath `
+                            -ComputerName     $ComputerName `
+                            -RunId            $RunId
+                        if ($extensions -and $extensions.Count -gt 0) {
+                            $AllExtensions.AddRange($extensions)
+                        }
                     }
                     else {
-                        # Chrome / Edge / Brave : "User Data" avec plusieurs profils
                         $profilesBrowser = Get-ChromiumProfiles -UserDataPath $basePath
                         foreach ($pb in $profilesBrowser) {
                             $profDir  = $pb.Directory
@@ -440,24 +403,23 @@ process {
                             if (-not (Test-Path $profRoot)) { continue }
 
                             $extensions = Get-ChromiumExtensionsFromProfile `
-                                -BrowserName    $b `
-                                -BrowserChannel $cfg.Channel `
-                                -UserName       $userName `
-                                -UserSid        $userSid `
+                                -BrowserName      $b `
+                                -BrowserChannel   $cfg.Channel `
+                                -UserName         $userName `
+                                -UserSid          $userSid `
                                 -ProfileDirectory $profDir `
-                                -ProfileName    $profName `
-                                -ProfileRoot    $profRoot `
-                                -ComputerName   $ComputerName `
-                                -RunId          $RunId
-
-                            $AllExtensions.AddRange($extensions)
+                                -ProfileName      $profName `
+                                -ProfileRoot      $profRoot `
+                                -ComputerName     $ComputerName `
+                                -RunId            $RunId
+                            if ($extensions -and $extensions.Count -gt 0) {
+                                $AllExtensions.AddRange($extensions)
+                            }
                         }
                     }
                 }
                 'Gecko' {
-                    # Firefox
                     if (-not (Test-Path $basePath)) { continue }
-
                     $ffProfiles = Get-ChildItem -Path $basePath -Directory -ErrorAction SilentlyContinue
                     foreach ($ff in $ffProfiles) {
                         $extensions = Get-FirefoxExtensionsFromProfile `
@@ -468,8 +430,9 @@ process {
                             -ProfilePath    $ff.FullName `
                             -ComputerName   $ComputerName `
                             -RunId          $RunId
-
-                        $AllExtensions.AddRange($extensions)
+                        if ($extensions -and $extensions.Count -gt 0) {
+                            $AllExtensions.AddRange($extensions)
+                        }
                     }
                 }
             }
