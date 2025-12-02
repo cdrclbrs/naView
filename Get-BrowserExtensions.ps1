@@ -44,7 +44,6 @@ param(
 )
 
 begin {
-
     function Test-IsElevated {
         $id = [System.Security.Principal.WindowsIdentity]::GetCurrent()
         $p = New-Object System.Security.Principal.WindowsPrincipal($id)
@@ -52,7 +51,7 @@ begin {
     }
 
     if (-not (Test-IsElevated)) {
-        Write-Error "[Error] Exécuter ce script avec des droits administrateur."
+        Write-Error "[Error] Run this script with Administrator privileges."
         exit 1
     }
 
@@ -110,7 +109,7 @@ begin {
             }
         }
         catch {
-            Write-Verbose "Erreur de lecture JSON : $Path - $($_.Exception.Message)"
+            Write-Verbose "JSON read error: $Path - $($_.Exception.Message)"
         }
         return $null
     }
@@ -323,13 +322,13 @@ begin {
         $bytesToSign  = [Text.Encoding]::UTF8.GetBytes($stringToSign)
         $decodedKey   = [Convert]::FromBase64String($SharedKey)
 
-        $hmacSha256         = New-Object System.Security.Cryptography.HMACSHA256
-        $hmacSha256.Key     = $decodedKey
-        $hash               = $hmacSha256.ComputeHash($bytesToSign)
-        $signature          = [Convert]::ToBase64String($hash)
+        $hmacSha256     = New-Object System.Security.Cryptography.HMACSHA256
+        $hmacSha256.Key = $decodedKey
+        $hash           = $hmacSha256.ComputeHash($bytesToSign)
+        $signature      = [Convert]::ToBase64String($hash)
 
         $authorization = "SharedKey $($WorkspaceId):$($signature)"
-        $uri = "https://$WorkspaceId.ods.opinsights.azure.com$resource?api-version=2016-04-01"
+        $uri = "https://$WorkspaceId.ods.opinsights.azure.com/api/logs?api-version=2016-04-01"
 
         $headers = @{
             "Content-Type" = $contentType
@@ -363,7 +362,6 @@ begin {
 }
 
 process {
-
     $profiles = Get-UserProfiles
     foreach ($p in $profiles) {
         $userPath = $p.LocalPath
@@ -442,13 +440,12 @@ process {
 }
 
 end {
-
     if ($AllExtensions.Count -eq 0) {
-        Write-Host "Aucune extension détectée."
+        Write-Host "No extensions detected."
         return
     }
 
-    Write-Host "Extensions détectées : $($AllExtensions.Count)"
+    Write-Host "Extensions detected: $($AllExtensions.Count)"
 
     switch ($OutputTarget) {
         'Local' {
@@ -456,17 +453,17 @@ end {
                 $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
                 $OutputPath = "C:\Temp\browser-extensions_$($ComputerName)_$timestamp.jsonl"
             }
-            Write-Host "Écriture locale : $OutputPath"
+            Write-Host "Writing local file: $OutputPath"
             Write-ExtensionsToLocalFile -Path $OutputPath -Data $AllExtensions
         }
         'Azure' {
             if (-not $WorkspaceId -or -not $SharedKey) {
-                Write-Error "WorkspaceId / SharedKey manquants pour l'envoi vers Azure."
+                Write-Error "WorkspaceId / SharedKey missing for Azure output."
                 return
             }
-            Write-Host "Envoi vers Azure Log Analytics (LogType = $LogType)..."
+            Write-Host "Sending to Azure Log Analytics (LogType = $LogType)..."
             Send-LogAnalyticsData -WorkspaceId $WorkspaceId -SharedKey $SharedKey -LogType $LogType -Data $AllExtensions
-            Write-Host "Envoi terminé."
+            Write-Host "Send complete."
         }
     }
 }
