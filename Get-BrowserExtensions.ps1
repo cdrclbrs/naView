@@ -1,28 +1,15 @@
 <#
 .SYNOPSIS
-    Inventaire pour le SOC des extensions de navigateurs (Chrome, Edge, Brave, Firefox, Opera )
+    Inventaire pour le SOC des extensions de navigateurs (Chrome, Edge, Brave, Firefox, Opera).
 .DESCRIPTION
     - Parcourt tous les profils utilisateurs locaux (hors C:\Windows)
     - Détecte les navigateurs installés (profils présents)
     - Récupère les extensions par navigateur / profil
+    - Optionnel : filtre sur les extensions installées manuellement par l'utilisateur
+    - Optionnel : enrichit les extensions Chromium avec un score de risque de lápi CRXcavator
     - Envoie les données soit :
         * sur Azure Log Analytics (par défaut),
-        * soit dans un fichier local (JSONL) si -OutputTarget Local specified
-         -v 2 corriger bug export avec loga sur AZ
-
-.PARAMETER OutputTarget
-    Local  : écrit dans un fichier local JSONL (un objet JSON par ligne).
-    Azure  : envoie vers Log Analytics (HTTP Data Collector API).
-.PARAMETER OutputPath
-    Chemin du fichier de sortie si OutputTarget = Local.
-.PARAMETER WorkspaceId
-    ID du workspace Log Analytics
-.PARAMETER SharedKey
-    ta Clé primaire 
-.PARAMETER LogType
-    Nom du type de log dans Log Analytics (par défaut : BrowserExtensions)
-.PARAMETER Browser
-    Permet de filtrer les navigateurs à scanner
+        * soit dans un fichier local (JSONL) si -OutputTarget Local est spécifié.
 #>
 
 [CmdletBinding()]
@@ -30,17 +17,28 @@ param(
     [Parameter()]
     [ValidateSet('Azure','Local')]
     [string]$OutputTarget = 'Azure',
+
     [Parameter()]
     [string]$OutputPath,
+
     [Parameter()]
     [string]$WorkspaceId = $env:BROWSER_INV_WORKSPACEID,
+
     [Parameter()]
     [string]$SharedKey   = $env:BROWSER_INV_SHAREDKEY,
+
     [Parameter()]
     [string]$LogType = 'BrowserExtensions',
+
     [Parameter()]
     [ValidateSet('Chrome','Edge','Brave','Firefox','Opera','OperaGX')]
-    [string[]]$Browser = @('Chrome','Edge','Brave','Firefox','Opera','OperaGX')
+    [string[]]$Browser = @('Chrome','Edge','Brave','Firefox','Opera','OperaGX'),
+
+    [Parameter()]
+    [switch]$EnableCrxCavator,
+
+    [Parameter()]
+    [switch]$UserInstalledOnly
 )
 
 begin {
@@ -51,7 +49,7 @@ begin {
     }
 
     if (-not (Test-IsElevated)) {
-        Write-Error "[Error] Run this script with Administrator privileges."
+        Write-Error "[Error] Run this script with Administrator Priv 👮"
         exit 1
     }
 
@@ -151,6 +149,33 @@ begin {
         return $MsgToken
     }
 
+    # Cache CRXcavator pour éviter les appels répétés sur les mêmes ID/version
+    $script:CrxCache = @{}
+
+    function Get-CrxCavatorRisk {
+        param(
+            [Parameter(Mandatory=$true)][string]$ExtensionId,
+            [Parameter(Mandatory=$true)][string]$Version
+        )
+
+        $key = "$ExtensionId|$Version"
+        if ($script:CrxCache.ContainsKey($key)) {
+            return $script:CrxCache[$key]
+        }
+
+        $url = "https://api.crxcavator.io/v1/report/$ExtensionId/$Version"
+        try {
+            $resp = Invoke-RestMethod -Method GET -Uri $url -TimeoutSec 10 -ErrorAction Stop
+            $script:CrxCache[$key] = $resp
+            return $resp
+        }
+        catch {
+            Write-Verbose "CRXcavator query failed for $ExtensionId $Version : $($_.Exception.Message)"
+            $script:CrxCache[$key] = $null
+            return $null
+        }
+    }
+
     function Get-ChromiumProfiles {
         param(
             [Parameter(Mandatory=$true)]
@@ -193,12 +218,20 @@ begin {
             [Parameter(Mandatory=$true)][string]$ProfileName,
             [Parameter(Mandatory=$true)][string]$ProfileRoot,
             [Parameter(Mandatory=$true)][string]$ComputerName,
-            [Parameter(Mandatory=$true)][string]$RunId
+            [Parameter(Mandatory=$true)][string]$RunId,
+            [Parameter(Mandatory=$true)][bool]$UserInstalledOnly,
+            [Parameter(Mandatory=$true)][bool]$EnableCrxCavator
         )
 
         $results = New-Object System.Collections.Generic.List[object]
         $extensionsRoot = Join-Path $ProfileRoot 'Extensions'
         if (-not (Test-Path $extensionsRoot)) { return $results }
+
+        $preferences = $null
+        $preferencesPath = Join-Path $ProfileRoot 'Preferences'
+        if ($UserInstalledOnly -and (Test-Path $preferencesPath)) {
+            $preferences = Get-JsonSafe -Path $preferencesPath
+        }
 
         $extensionDirs = Get-ChildItem -Path $extensionsRoot -Directory -ErrorAction SilentlyContinue |
                          Where-Object { $_.Name -ne 'Temp' }
@@ -209,6 +242,23 @@ begin {
                 $manifestPath = Join-Path $v.FullName 'manifest.json'
                 $manifest = Get-JsonSafe -Path $manifestPath
                 if (-not $manifest) { continue }
+
+                $extSettings = $null
+                if ($UserInstalledOnly -and $preferences -and $preferences.extensions -and $preferences.extensions.settings) {
+                    $prop = $preferences.extensions.settings.PSObject.Properties | Where-Object { $_.Name -eq $extDir.Name }
+                    if ($prop) { $extSettings = $prop.Value }
+                }
+
+                if ($UserInstalledOnly -and $extSettings) {
+                    $installType = $extSettings.install_type
+                    $isComponent = $extSettings.is_component
+                    $byDefault   = $extSettings.was_installed_by_default
+                    $byOem       = $extSettings.was_installed_by_oem
+
+                    if ($installType -ne 'normal' -or $isComponent -eq $true -or $byDefault -eq $true -or $byOem -eq $true) {
+                        continue
+                    }
+                }
 
                 $extName = $null
                 if ($manifest.name -like '__MSG*') {
@@ -222,6 +272,30 @@ begin {
                     $maxLen = 400
                     if ($desc.Length -gt $maxLen) {
                         $desc = $desc.Substring(0,$maxLen) + ' (...)'
+                    }
+                }
+
+                $crxRiskTotal   = $null
+                $crxRiskRating  = $null
+                $crxReportFound = $false
+
+                if ($EnableCrxCavator -and ($BrowserName -in @('Chrome','Edge','Brave'))) {
+                    $risk = Get-CrxCavatorRisk -ExtensionId $extDir.Name -Version $manifest.version
+                    if ($risk -and $risk.risk) {
+                        $crxRiskTotal   = $risk.risk.total
+                        $crxReportFound = $true
+                        if ($crxRiskTotal -ge 70) {
+                            $crxRiskRating = 'High'
+                        }
+                        elseif ($crxRiskTotal -ge 40) {
+                            $crxRiskRating = 'Medium'
+                        }
+                        elseif ($crxRiskTotal -ge 10) {
+                            $crxRiskRating = 'Low'
+                        }
+                        elseif ($crxRiskTotal -ne $null) {
+                            $crxRiskRating = 'VeryLow'
+                        }
                     }
                 }
 
@@ -241,6 +315,9 @@ begin {
                     Engine         = 'Chromium'
                     Timestamp      = (Get-Date).ToString('o')
                     RunId          = $RunId
+                    CrxReportFound = $crxReportFound
+                    CrxRiskTotal   = $crxRiskTotal
+                    CrxRiskRating  = $crxRiskRating
                 })
             }
         }
@@ -256,7 +333,8 @@ begin {
             [Parameter(Mandatory=$true)][string]$UserSid,
             [Parameter(Mandatory=$true)][string]$ProfilePath,
             [Parameter(Mandatory=$true)][string]$ComputerName,
-            [Parameter(Mandatory=$true)][string]$RunId
+            [Parameter(Mandatory=$true)][string]$RunId,
+            [Parameter(Mandatory=$true)][bool]$UserInstalledOnly
         )
 
         $results = New-Object System.Collections.Generic.List[object]
@@ -265,6 +343,23 @@ begin {
         if (-not $data -or -not $data.addons) { return $results }
 
         foreach ($ext in $data.addons) {
+            if ($UserInstalledOnly) {
+                $isSystem = $false
+                $hidden   = $false
+                $type     = $ext.type
+
+                if ($ext.PSObject.Properties.Name -contains 'isSystem') {
+                    $isSystem = [bool]$ext.isSystem
+                }
+                if ($ext.PSObject.Properties.Name -contains 'hidden') {
+                    $hidden = [bool]$ext.hidden
+                }
+
+                if ($isSystem -or $hidden -or $type -ne 'extension') {
+                    continue
+                }
+            }
+
             $name = $ext.defaultLocale.name
             $desc = $ext.defaultLocale.description
 
@@ -291,6 +386,9 @@ begin {
                 Engine         = 'Gecko'
                 Timestamp      = (Get-Date).ToString('o')
                 RunId          = $RunId
+                CrxReportFound = $false
+                CrxRiskTotal   = $null
+                CrxRiskRating  = $null
             })
         }
 
@@ -388,7 +486,9 @@ process {
                             -ProfileName      $profileName `
                             -ProfileRoot      $basePath `
                             -ComputerName     $ComputerName `
-                            -RunId            $RunId
+                            -RunId            $RunId `
+                            -UserInstalledOnly ([bool]$UserInstalledOnly) `
+                            -EnableCrxCavator ([bool]$EnableCrxCavator)
                         if ($extensions -and $extensions.Count -gt 0) {
                             $AllExtensions.AddRange($extensions)
                         }
@@ -410,7 +510,9 @@ process {
                                 -ProfileName      $profName `
                                 -ProfileRoot      $profRoot `
                                 -ComputerName     $ComputerName `
-                                -RunId            $RunId
+                                -RunId            $RunId `
+                                -UserInstalledOnly ([bool]$UserInstalledOnly) `
+                                -EnableCrxCavator ([bool]$EnableCrxCavator)
                             if ($extensions -and $extensions.Count -gt 0) {
                                 $AllExtensions.AddRange($extensions)
                             }
@@ -428,7 +530,8 @@ process {
                             -UserSid        $userSid `
                             -ProfilePath    $ff.FullName `
                             -ComputerName   $ComputerName `
-                            -RunId          $RunId
+                            -RunId          $RunId `
+                            -UserInstalledOnly ([bool]$UserInstalledOnly)
                         if ($extensions -and $extensions.Count -gt 0) {
                             $AllExtensions.AddRange($extensions)
                         }
@@ -458,10 +561,10 @@ end {
         }
         'Azure' {
             if (-not $WorkspaceId -or -not $SharedKey) {
-                Write-Error "WorkspaceId / SharedKey missing for Azure output."
+                Write-Error "Yup, Kevin, you lost the keys ?!!"
                 return
             }
-            Write-Host "Sending to Azure Log Analytics (LogType = $LogType)..."
+            Write-Host "Sending to Azure (LogType = $LogType)..."
             Send-LogAnalyticsData -WorkspaceId $WorkspaceId -SharedKey $SharedKey -LogType $LogType -Data $AllExtensions
             Write-Host "Send complete."
         }
