@@ -6,7 +6,6 @@ Ce projet fournit un **système d’inventaire des extensions de navigateurs** b
   (Chrome, Edge, Firefox, Brave, Opera etc..bref du chrome based)
 - Extraire les extensions installées pour chaque profil utilisateur local
 - (Optionnel) Ne remonter que les extensions **ajoutées manuellement** par l’utilisateur
-- (Optionnel) Enrichir les extensions Chromium via l’API **CRXcavator** (score de risque)
 - Normaliser les données collectées
 - Exporter les résultats :
   - **en local** (fichier JSONL)
@@ -18,7 +17,7 @@ Ce script est adapté à :
 - l’inventaire 
 - la conformité et la sécurité des postes  
 - l’analyse de surface d’attaque côté navigateur  
-- le suivi des extensions potentiellement dangereuses via un service API CRXcavator
+- le suivi des extensions potentiellement dangereuses 
 
 ---
 
@@ -52,19 +51,6 @@ Pour chaque extension :
 - Timestamp
 - Identifiant d’exécution du script (GUID)
 
-### Enrichissement CRXcavator  🚀🚀🚀
-
-CRXcavator est un service de sécurité open-source développé par Duo Security (Cisco) permettant d’évaluer les risques des extensions.
-Pour les extensions **Chromium** (Chrome / Edge / Brave), si l’option est activée :
-
-- Interroge l’API publique `https://api.crxcavator.io/`
-- Ajoute des champs dans Azure Log Analytics :
-
-| Champ | Description |
-|-------|-------------|
-| `CrxReportFound` | un rapport CRXcavator existe pour cette extension/version |
-| `CrxRiskTotal` | Score de risque global (nombre) |
-| `CrxRiskRating` | Catégorie de risque dérivée (VeryLow / Low / Medium / High) |
 
 ### Filtrage des extensions “installées par l’utilisateur” (optionnel)
 
@@ -123,8 +109,8 @@ Utilisation
 Copy code
 .\Get-BrowserExtensions.ps1 `
   -OutputTarget Azure `
-  -WorkspaceId "<VOTRE-WORKSPACE-ID>" `
-  -SharedKey "<VOTRE-SHARED-KEY>" `
+  -WorkspaceId "<WORKSPACE-ID>" `
+  -SharedKey "<SHARED-KEY>" `
   -Verbose
   ```
 
