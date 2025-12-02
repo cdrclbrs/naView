@@ -12,19 +12,6 @@
         * soit dans un fichier local (JSONL) si -OutputTarget Local est spécifié.
 #>
 
-<#
-.SYNOPSIS
-    Inventaire pour le SOC des extensions de navigateurs (Chrome, Edge, Brave, Firefox, Opera).
-.DESCRIPTION
-    - Parcourt tous les profils utilisateurs locaux (hors C:\Windows)
-    - Détecte les navigateurs installés (profils présents)
-    - Récupère les extensions par navigateur / profil
-    - Optionnel : ne remonter que les extensions installées manuellement par l'utilisateur
-    - Envoie les données soit :
-        * sur Azure Log Analytics (par défaut),
-        * soit dans un fichier local (JSONL) si -OutputTarget Local est spécifié.
-#>
-
 [CmdletBinding()]
 param(
     [Parameter()]

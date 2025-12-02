@@ -1,4 +1,8 @@
-# naView - l'Analyste de tes navigateurs!
+# naView - Get Browser Extensions
+Vue immediate des extensions de naviagteurs installées sur les differents profils machine.
+
+![view](images/screen.png)
+
 
 Ce projet fournit un **système d’inventaire des extensions de navigateurs** basé sur PowerShell, capable de :
 
