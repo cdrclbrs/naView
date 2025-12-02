@@ -80,7 +80,6 @@ Si activé :
 - Workspace ID
 - Clé Shared Key
 
-
 ---
 
 ## Installation et exec
@@ -90,18 +89,18 @@ Si activé :
 Téléchargez le script :
 
 ```powershell
-Invoke-WebRequest "https://raw.githubusercontent.com/cdrclbrs/naView/refs/heads/main/Get-BrowserExtensions.ps1" -OutFile "C:\Tools\Get-BrowserExtensions.ps1"```
+Invoke-WebRequest "https://raw.githubusercontent.com/cdrclbrs/naView/refs/heads/main/Get-BrowserExtensions.ps1" -OutFile "C:\Tools\Get-BrowserExtensions.ps1"
+```
 Utilisation
 
 1. Mode Local
 
-
-
+```powershell
 .\Get-BrowserExtensions.ps1 
   -OutputTarget Local 
   -OutputPath "C:\Temp\extensions.jsonl" 
   -Verbose
-````
+```
 
 2. Mode Azure Log Analytics
 
