@@ -112,6 +112,16 @@ Copy code
   -SharedKey "<SHARED-KEY>" `
   -Verbose
   ```
+Filtraer sur les extensions Users installed only
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File "C:\Tools\Get-BrowserExtensions.ps1" 
+  -OutputTarget Azure 
+  -WorkspaceId "d91a655d-b4xxxxxfb8" 
+  -SharedKey "wkvCl11iEmEFGxYGxxxxxxxx6zn511Q==" 
+  -UserInstalledOnly 
+  -Verbose
+  ```
+
 
 
 ## Exemple — Exécution du Script
