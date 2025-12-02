@@ -350,7 +350,8 @@ begin {
         $hmacSha256.Key     = $decodedKey
         $hash               = $hmacSha256.ComputeHash($bytesToSign)
         $signature          = [Convert]::ToBase64String($hash)
-        $authorization      = "SharedKey $WorkspaceId:$signature"
+        $authorization      = "SharedKey $($WorkspaceId):$($signature)"
+
 
         $uri = "https://$WorkspaceId.ods.opinsights.azure.com$resource?api-version=2016-04-01"
 
